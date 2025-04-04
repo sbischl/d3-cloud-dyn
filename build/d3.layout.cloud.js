@@ -14,6 +14,9 @@ const SPIRALS = {
 const cw = 1 << 11 >> 5;
 const ch = 1 << 11;
 
+// Store previous layouts to maintain word positions
+const prevLayouts = {};
+
 module.exports = function() {
   var size = [256, 256],
       text = cloudText,
@@ -30,7 +33,8 @@ module.exports = function() {
       timer = null,
       random = Math.random,
       cloud = {},
-      canvas = cloudCanvas;
+      canvas = cloudCanvas,
+      animationDuration = 750; // Animation duration in milliseconds
 
   cloud.canvas = function(_) {
     return arguments.length ? (canvas = functor(_), cloud) : canvas;
@@ -51,8 +55,22 @@ module.exports = function() {
           d.rotate = rotate.call(this, d, i);
           d.size = ~~fontSize.call(this, d, i);
           d.padding = padding.call(this, d, i);
+
+          // Try to use previous position and rotation if available
+          if (prevLayouts[d.text]) {
+            d.x = prevLayouts[d.text].x;
+            d.y = prevLayouts[d.text].y;
+            d.rotate = prevLayouts[d.text].rotate;
+          }
           return d;
-        }).sort(function(a, b) { return b.size - a.size; });
+        }).sort(function(a, b) { 
+          // Sort by previous existence first (to maintain stability), then by size
+          const aHasPrev = prevLayouts[a.text] ? 1 : 0;
+          const bHasPrev = prevLayouts[b.text] ? 1 : 0;
+          
+          if (aHasPrev !== bHasPrev) return bHasPrev - aHasPrev;
+          return b.size - a.size; 
+        });
 
     if (timer) clearInterval(timer);
     timer = setInterval(step, 0);
@@ -64,21 +82,43 @@ module.exports = function() {
       var start = Date.now();
       while (Date.now() - start < timeInterval && ++i < n && timer) {
         var d = data[i];
-        d.x = (size[0] * (random() + .5)) >> 1;
-        d.y = (size[1] * (random() + .5)) >> 1;
+        // If this word doesn't have a previous position, give it a random start position
+        if (!prevLayouts[d.text]) {
+          d.x = (size[0] * (random() + .5)) >> 1;
+          d.y = (size[1] * (random() + .5)) >> 1;
+        }
+        
         cloudSprite(contextAndRatio, d, data, i);
         if (d.hasText && place(board, d, bounds)) {
           tags.push(d);
           event.call("word", cloud, d);
           if (bounds) cloudBounds(bounds, d);
           else bounds = [{x: d.x + d.x0, y: d.y + d.y0}, {x: d.x + d.x1, y: d.y + d.y1}];
+          
           // Temporary hack
           d.x -= size[0] >> 1;
           d.y -= size[1] >> 1;
+          
+          // Store this word's position for future layouts
+          prevLayouts[d.text] = {
+            x: d.x + (size[0] >> 1),
+            y: d.y + (size[1] >> 1),
+            rotate: d.rotate,
+            size: d.size
+          };
         }
       }
       if (i >= n) {
         cloud.stop();
+        
+        // Clean up prevLayouts by removing words that aren't in the current layout
+        const currentWords = new Set(tags.map(d => d.text));
+        for (const word in prevLayouts) {
+          if (!currentWords.has(word)) {
+            delete prevLayouts[word];
+          }
+        }
+        
         event.call("end", cloud, tags, bounds);
       }
     }
@@ -92,6 +132,65 @@ module.exports = function() {
     for (const d of words) {
       delete d.sprite;
     }
+    return cloud;
+  };
+
+  // Draw the word cloud with animation
+  cloud.draw = function(container, width, height) {
+    if (!container) return;
+
+    // Create a transition for smooth updates
+    const t = typeof d3 !== 'undefined' ? 
+      d3.transition().duration(animationDuration) : 
+      null;
+      
+    // Ensure we have the transform group for centering
+    let g = container.select("g");
+    if (g.empty()) {
+      g = container.append("g")
+        .attr("transform", `translate(${width/2},${height/2})`);
+    }
+    
+    // Select all text elements and bind data
+    const text = g.selectAll("text")
+      .data(words, d => d.text);
+    
+    // Remove words that are no longer in the data
+    if (t) {
+      text.exit()
+        .transition(t)
+        .style("opacity", 0)
+        .remove();
+    } else {
+      text.exit().remove();
+    }
+    
+    // Update existing words
+    if (t) {
+      text.transition(t)
+        .attr("transform", d => `translate(${[d.x, d.y]})rotate(${d.rotate})`)
+        .style("font-size", d => d.size + "px");
+    } else {
+      text.attr("transform", d => `translate(${[d.x, d.y]})rotate(${d.rotate})`)
+        .style("font-size", d => d.size + "px");
+    }
+    
+    // Add new words
+    const enter = text.enter()
+      .append("text")
+      .attr("text-anchor", "middle")
+      .style("font-family", "Impact")
+      .style("font-size", d => d.size + "px")
+      .style("fill", "black")
+      .attr("transform", d => `translate(${[d.x, d.y]})rotate(${d.rotate})`)
+      .text(d => d.text);
+      
+    if (t) {
+      enter.style("opacity", 0)
+        .transition(t)
+        .style("opacity", 1);
+    }
+    
     return cloud;
   };
 
@@ -109,9 +208,32 @@ module.exports = function() {
   }
 
   function place(board, tag, bounds) {
+    // Try to use previous position first if available
+    if (prevLayouts[tag.text]) {
+      // Position from previous layout
+      const prev = prevLayouts[tag.text];
+      
+      // Try the exact previous position first
+      tag.x = prev.x;
+      tag.y = prev.y;
+      
+      // Check if this position works without collision
+      if (tag.x + tag.x0 >= 0 && tag.y + tag.y0 >= 0 &&
+          tag.x + tag.x1 <= size[0] && tag.y + tag.y1 <= size[1] &&
+          (!bounds || collideRects(tag, bounds)) &&
+          !cloudCollide(tag, board, size[0])) {
+        // Previous position works - use it!
+        placeWordOnBoard(tag, board);
+        return true;
+      }
+    }
+    
+    // Previous position didn't work or doesn't exist
+    // Start spiral from previous position if available, otherwise from center
+    var startX = prevLayouts[tag.text] ? prevLayouts[tag.text].x : tag.x;
+    var startY = prevLayouts[tag.text] ? prevLayouts[tag.text].y : tag.y;
+    
     var perimeter = [{x: 0, y: 0}, {x: size[0], y: size[1]}],
-        startX = tag.x,
-        startY = tag.y,
         maxDelta = Math.sqrt(size[0] * size[0] + size[1] * size[1]),
         s = spiral(size),
         dt = random() < .5 ? 1 : -1,
@@ -134,27 +256,32 @@ module.exports = function() {
       // TODO only check for collisions within current bounds.
       if (!bounds || collideRects(tag, bounds)) {
         if (!cloudCollide(tag, board, size[0])) {
-          var sprite = tag.sprite,
-              w = tag.width >> 5,
-              sw = size[0] >> 5,
-              lx = tag.x - (w << 4),
-              sx = lx & 0x7f,
-              msx = 32 - sx,
-              h = tag.y1 - tag.y0,
-              x = (tag.y + tag.y0) * sw + (lx >> 5),
-              last;
-          for (var j = 0; j < h; j++) {
-            last = 0;
-            for (var i = 0; i <= w; i++) {
-              board[x + i] |= (last << msx) | (i < w ? (last = sprite[j * w + i]) >>> sx : 0);
-            }
-            x += sw;
-          }
+          placeWordOnBoard(tag, board);
           return true;
         }
       }
     }
     return false;
+  }
+
+  // Helper to place a word on the board (extracted from place function)
+  function placeWordOnBoard(tag, board) {
+    var sprite = tag.sprite,
+        w = tag.width >> 5,
+        sw = size[0] >> 5,
+        lx = tag.x - (w << 4),
+        sx = lx & 0x7f,
+        msx = 32 - sx,
+        h = tag.y1 - tag.y0,
+        x = (tag.y + tag.y0) * sw + (lx >> 5),
+        last;
+    for (var j = 0; j < h; j++) {
+      last = 0;
+      for (var i = 0; i <= w; i++) {
+        board[x + i] |= (last << msx) | (i < w ? (last = sprite[j * w + i]) >>> sx : 0);
+      }
+      x += sw;
+    }
   }
 
   cloud.timeInterval = function(_) {
@@ -210,6 +337,19 @@ module.exports = function() {
     return value === event ? cloud : value;
   };
 
+  // Method to reset the prevLayouts (e.g., if user wants to restart animation)
+  cloud.resetPrevLayouts = function() {
+    for (let key in prevLayouts) {
+      delete prevLayouts[key];
+    }
+    return cloud;
+  };
+
+  // Set animation duration
+  cloud.animationDuration = function(_) {
+    return arguments.length ? (animationDuration = +_, cloud) : animationDuration;
+  };
+
   return cloud;
 };
 
@@ -230,7 +370,11 @@ function cloudFontSize(d) {
 }
 
 function cloudRotate() {
-  return (~~(random() * 6) - 3) * 30;
+  // Make rotation more stable by using previous rotation if available
+  if (this && this.text && prevLayouts[this.text]) {
+    return prevLayouts[this.text].rotate;
+  }
+  return (~~(Math.random() * 6) - 3) * 30;
 }
 
 function cloudPadding() {
