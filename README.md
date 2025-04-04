@@ -7,11 +7,40 @@ near-interactive speeds.
 See [here](http://www.jasondavies.com/wordcloud/) for an interactive
 demonstration along with implementation details.
 
-![Example cloud of Twitter search results for “amazing”](http://www.jasondavies.com/wordcloud/amazing.png)
+![Example cloud of Twitter search results for "amazing"](http://www.jasondavies.com/wordcloud/amazing.png)
 
 ## Usage
 
 See the samples in `examples/`.
+
+For dynamic word clouds with animation and position stability, check out `examples/dynamic.html`.
+
+## Dynamic Word Cloud Features
+
+This fork adds several features to enhance dynamic word clouds:
+
+### Position Stability
+Words maintain their positions between layout updates, providing a smoother user experience for dynamic data.
+
+### Animated Transitions
+The `cloud.draw()` method renders the word cloud with animated transitions when words are added, removed, or updated.
+
+### API for Dynamic Clouds
+
+<a name="draw" href="#draw">#</a> <b>draw</b>(<i>container</i>, <i>width</i>, <i>height</i>)
+
+Draws the word cloud with animations in the specified SVG container. Words will smoothly transition to new positions
+when the cloud is updated with different data.
+
+<a name="resetPrevLayouts" href="#resetPrevLayouts">#</a> <b>resetPrevLayouts</b>()
+
+Resets the stored positions of previously placed words, causing the next layout to be generated from scratch
+without position memory.
+
+<a name="animationDuration" href="#animationDuration">#</a> <b>animationDuration</b>([<i>duration</i>])
+
+If specified, sets the animation duration in milliseconds for transitions when words are added, removed, or changed.
+If not specified, returns the current animation duration, which defaults to 750ms.
 
 ## API Reference
 
@@ -51,7 +80,7 @@ Stops the layout algorithm.
 
 <a name="timeInterval" href="#timeInterval">#</a> <b>timeInterval</b>([<i>time</i>])
 
-Internally, the layout uses `setInterval` to avoid locking up the browser’s
+Internally, the layout uses `setInterval` to avoid locking up the browser's
 event loop.  If specified, **time** is the maximum amount of time that can be
 spent during the current timestep.  If not specified, returns the current
 maximum time interval, which defaults to `Infinity`.
