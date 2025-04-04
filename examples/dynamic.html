@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Dynamic Word Cloud Example</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="../build/d3.layout.cloud.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      margin: 0;
+      padding: 20px;
+    }
+    #cloud-container {
+      width: 800px;
+      height: 500px;
+      margin: 0 auto;
+      border: 1px solid #ddd;
+    }
+    button {
+      margin: 10px;
+      padding: 8px 16px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <h1>Dynamic Word Cloud</h1>
+  <div>
+    <button id="update-btn">Update Cloud</button>
+    <button id="reset-btn">Reset Positions</button>
+  </div>
+  <div id="cloud-container"></div>
+  
+  <script>
+    // Initial dataset
+    let words = [
+      { text: "Hello", value: 40 },
+      { text: "World", value: 30 },
+      { text: "JavaScript", value: 25 },
+      { text: "D3.js", value: 20 },
+      { text: "Visualization", value: 15 },
+      { text: "Cloud", value: 35 },
+      { text: "Data", value: 28 },
+      { text: "Dynamic", value: 33 }
+    ];
+    
+    // Create an SVG element
+    const svg = d3.select("#cloud-container")
+      .append("svg")
+      .attr("width", 800)
+      .attr("height", 500);
+    
+    // Create the cloud layout
+    const cloud = d3.layout.cloud()
+      .size([800, 500])
+      .words(words)
+      .padding(5)
+      .rotate(function() { return ~~(Math.random() * 2) * 90; })
+      .fontSize(function(d) { return d.value; })
+      .on("end", end);
+    
+    // Run the layout
+    cloud.start();
+    
+    // Update the cloud with animations
+    function end(words) {
+      cloud.draw(svg, 800, 500);
+    }
+    
+    // Update button handler
+    d3.select("#update-btn").on("click", function() {
+      // Generate some random changes to the dataset
+      words = words.map(w => ({
+        text: w.text,
+        value: Math.max(10, Math.min(50, w.value + (Math.random() - 0.5) * 20))
+      }));
+      
+      // Occasionally add or remove words
+      if (Math.random() > 0.7 && words.length > 5) {
+        // Remove a random word
+        const removeIndex = Math.floor(Math.random() * words.length);
+        words.splice(removeIndex, 1);
+      } else if (Math.random() > 0.7 && words.length < 15) {
+        // Add a new word
+        const newWords = [
+          "Animation", "Stable", "Position", "Memory", "Layout", 
+          "Generator", "Web", "Responsive", "Design", "Browser"
+        ];
+        const unused = newWords.filter(w => !words.some(existing => existing.text === w));
+        if (unused.length > 0) {
+          const randomWord = unused[Math.floor(Math.random() * unused.length)];
+          words.push({
+            text: randomWord,
+            value: 15 + Math.random() * 25
+          });
+        }
+      }
+      
+      // Update and redraw the cloud
+      cloud.words(words).start();
+    });
+    
+    // Reset button handler
+    d3.select("#reset-btn").on("click", function() {
+      // Reset the position memory
+      cloud.resetPrevLayouts();
+      // Redraw the cloud with the same words
+      cloud.words(words).start();
+    });
+  </script>
+</body>
+</html> 
