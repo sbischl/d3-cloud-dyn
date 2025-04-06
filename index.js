@@ -27,6 +27,8 @@ module.exports = function() {
       padding = cloudPadding,
       spiral = archimedeanSpiral,
       words = [],
+      previousPeriodWords = new Set(), // Track words from previous period
+      wordColor = cloudWordColor, // Function for determining word color
       timeInterval = Infinity,
       event = dispatch("word", "end"),
       timer = null,
@@ -54,6 +56,11 @@ module.exports = function() {
           d.rotate = rotate.call(this, d, i);
           d.size = ~~fontSize.call(this, d, i);
           d.padding = padding.call(this, d, i);
+          
+          // Set wasInPreviousPeriod property if not already set
+          if (d.wasInPreviousPeriod === undefined) {
+            d.wasInPreviousPeriod = previousPeriodWords.has(d.text);
+          }
 
           // Try to use previous position and rotation if available
           if (prevLayouts[d.text]) {
@@ -135,12 +142,15 @@ module.exports = function() {
   };
 
   // Draw the word cloud with animation
-  cloud.draw = function(container, width, height) {
+  cloud.draw = function(container, width, height, duration) {
     if (!container) return;
+
+    // Use specified duration or default
+    const animDuration = duration !== undefined ? duration : animationDuration;
 
     // Create a transition for smooth updates
     const t = typeof d3 !== 'undefined' ? 
-      d3.transition().duration(animationDuration) : 
+      d3.transition().duration(animDuration) : 
       null;
       
     // Ensure we have the transform group for centering
@@ -168,10 +178,12 @@ module.exports = function() {
     if (t) {
       text.transition(t)
         .attr("transform", d => `translate(${[d.x, d.y]})rotate(${d.rotate})`)
-        .style("font-size", d => d.size + "px");
+        .style("font-size", d => d.size + "px")
+        .style("fill", d => wordColor.call(this, d));
     } else {
       text.attr("transform", d => `translate(${[d.x, d.y]})rotate(${d.rotate})`)
-        .style("font-size", d => d.size + "px");
+        .style("font-size", d => d.size + "px")
+        .style("fill", d => wordColor.call(this, d));
     }
     
     // Add new words
@@ -180,7 +192,7 @@ module.exports = function() {
       .attr("text-anchor", "middle")
       .style("font-family", "Impact")
       .style("font-size", d => d.size + "px")
-      .style("fill", "black")
+      .style("fill", d => wordColor.call(this, d))
       .attr("transform", d => `translate(${[d.x, d.y]})rotate(${d.rotate})`)
       .text(d => d.text);
       
@@ -349,6 +361,16 @@ module.exports = function() {
     return arguments.length ? (animationDuration = +_, cloud) : animationDuration;
   };
 
+  // Set previous period words
+  cloud.previousPeriodWords = function(_) {
+    return arguments.length ? (previousPeriodWords = _, cloud) : previousPeriodWords;
+  };
+
+  // Set word color function
+  cloud.wordColor = function(_) {
+    return arguments.length ? (wordColor = functor(_), cloud) : wordColor;
+  };
+
   return cloud;
 };
 
@@ -378,6 +400,11 @@ function cloudRotate() {
 
 function cloudPadding() {
   return 1;
+}
+
+// Default word color function
+function cloudWordColor(d) {
+  return d.wasInPreviousPeriod ? "#CC0000" : "#000000";
 }
 
 // Fetches a monochrome sprite bitmap for the specified text.

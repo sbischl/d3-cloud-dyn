@@ -16,6 +16,7 @@
       height: 500px;
       margin: 0 auto;
       border: 1px solid #ddd;
+      background-color: white;
     }
     button {
       margin: 10px;
@@ -23,28 +24,122 @@
       font-size: 14px;
       cursor: pointer;
     }
+    .controls {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    .control-group {
+      margin: 0 10px;
+      display: flex;
+      align-items: center;
+    }
+    label {
+      margin-right: 5px;
+    }
+    input {
+      padding: 5px;
+      width: 60px;
+    }
+    #current-month {
+      font-weight: bold;
+      margin: 0 10px;
+    }
+    select {
+      padding: 5px;
+    }
+    .word-count {
+      font-size: 12px;
+      color: #666;
+      margin-left: 10px;
+    }
+    .stats {
+      font-size: 12px;
+      color: #666;
+      margin-top: 5px;
+    }
   </style>
 </head>
 <body>
   <h1>Dynamic Word Cloud</h1>
-  <div>
-    <button id="update-btn">Update Cloud</button>
-    <button id="reset-btn">Reset Positions</button>
+  <div class="controls">
+    <div class="control-group">
+      <button id="play-btn">Play</button>
+      <button id="pause-btn" disabled>Pause</button>
+      <button id="update-btn">Next Month</button>
+      <span id="current-month"></span>
+    </div>
+    <div class="control-group">
+      <label for="update-interval">Update Interval (ms):</label>
+      <input type="number" id="update-interval" value="2000" min="500" step="100">
+    </div>
+    <div class="control-group">
+      <label for="animation-time">Animation Time (ms):</label>
+      <input type="number" id="animation-time" value="750" min="100" step="50">
+    </div>
+    <div class="control-group">
+      <button id="reset-btn">Reset Positions</button>
+    </div>
   </div>
+  
+  <div class="controls">
+    <div class="control-group">
+      <label for="max-words">Max Words:</label>
+      <input type="number" id="max-words" value="25" min="5" max="100" step="5">
+    </div>
+    <div class="control-group">
+      <label for="scale-type">Scale Type:</label>
+      <select id="scale-type">
+        <option value="log" selected>Logarithmic (log n)</option>
+        <option value="sqrt">Square Root (√n)</option>
+        <option value="linear">Linear (n)</option>
+      </select>
+    </div>
+    <div class="control-group">
+      <label for="scale-factor">Scale Factor:</label>
+      <input type="number" id="scale-factor" value="5" min="1" max="20" step="0.5">
+    </div>
+    <div class="control-group">
+      <label for="min-size">Min Size:</label>
+      <input type="number" id="min-size" value="10" min="5" max="20" step="1">
+    </div>
+    <div class="control-group">
+      <label for="max-size">Max Size:</label>
+      <input type="number" id="max-size" value="50" min="20" max="100" step="5">
+    </div>
+    <div class="control-group">
+      <label for="padding">Word Padding:</label>
+      <input type="number" id="padding" value="2" min="1" max="10" step="1">
+    </div>
+  </div>
+  
   <div id="cloud-container"></div>
+  <div class="stats">
+    <span class="word-count" id="word-count"></span>
+    <span id="placement-stats"></span>
+  </div>
+  
+  <div class="legend" style="text-align: center; margin-top: 10px; font-size: 14px;">
+    <span style="color: #CC0000; font-weight: bold;">Red words</span> were present in the previous period. 
+    <span style="color: #000000; font-weight: bold;">Black words</span> are new.
+  </div>
   
   <script>
-    // Initial dataset
-    let words = [
-      { text: "Hello", value: 40 },
-      { text: "World", value: 30 },
-      { text: "JavaScript", value: 25 },
-      { text: "D3.js", value: 20 },
-      { text: "Visualization", value: 15 },
-      { text: "Cloud", value: 35 },
-      { text: "Data", value: 28 },
-      { text: "Dynamic", value: 33 }
-    ];
+    // State variables
+    let topicData = [];
+    let currentMonthIndex = 0;
+    let words = [];
+    let previousPeriodWords = new Set(); // Track words from previous period
+    let playInterval = null;
+    let animationTime = 750; // Default animation time in milliseconds
+    let maxWords = 25; // Default max number of words to show
+    let scaleType = "log"; // Default scale type
+    let scaleFactor = 5; // Default scale factor
+    let minFontSize = 10; // Minimum font size
+    let maxFontSize = 50; // Maximum font size
+    let padding = 2; // Space between words
     
     // Create an SVG element
     const svg = d3.select("#cloud-container")
@@ -52,62 +147,226 @@
       .attr("width", 800)
       .attr("height", 500);
     
+    // Calculate font size based on scale type and value
+    function calculateFontSize(value) {
+      let normalized;
+      
+      switch(scaleType) {
+        case "sqrt":
+          normalized = Math.sqrt(value);
+          break;
+        case "linear":
+          normalized = value;
+          break;
+        case "log":
+        default:
+          normalized = Math.log(value + 1); // Add 1 to avoid log(0)
+          break;
+      }
+      
+      // Scale the normalized value to be between minFontSize and maxFontSize
+      return minFontSize + (normalized * scaleFactor);
+    }
+    
+    // Word color function for persistent words
+    function wordColorFunction(d) {
+      return d.wasInPreviousPeriod ? "#CC0000" : "#000000";
+    }
+    
     // Create the cloud layout
     const cloud = d3.layout.cloud()
       .size([800, 500])
-      .words(words)
-      .padding(5)
-      .rotate(function() { return ~~(Math.random() * 2) * 90; })
-      .fontSize(function(d) { return d.value; })
+      .words([])
+      .padding(padding)
+      .rotate(function() { return 0; })
+      .fontSize(function(d) { return calculateFontSize(d.value); })
+      .wordColor(wordColorFunction)
       .on("end", end);
     
-    // Run the layout
-    cloud.start();
+    // Load data from topic_shares.json
+    d3.json("topic_shares.json").then(function(data) {
+      topicData = data;
+      updateWordsFromTopicData();
+      updateMonthDisplay();
+      updateWordCount();
+      renderCloud();
+    }).catch(function(error) {
+      console.error("Error loading the data:", error);
+    });
     
-    // Update the cloud with animations
-    function end(words) {
-      cloud.draw(svg, 800, 500);
+    // Render the cloud with current settings
+    function renderCloud() {
+      // Update the cloud settings
+      cloud
+        .padding(padding)
+        .previousPeriodWords(previousPeriodWords)
+        .words(JSON.parse(JSON.stringify(words))) // Deep clone to avoid reference issues
+        .start();
     }
     
-    // Update button handler
-    d3.select("#update-btn").on("click", function() {
-      // Generate some random changes to the dataset
-      words = words.map(w => ({
-        text: w.text,
-        value: Math.max(10, Math.min(50, w.value + (Math.random() - 0.5) * 20))
+    // Update words based on current month's data
+    function updateWordsFromTopicData() {
+      if (topicData.length === 0) return;
+      
+      const monthData = topicData[currentMonthIndex];
+      if (!monthData) return;
+      
+      // Get max number of words to display
+      maxWords = parseInt(document.getElementById("max-words").value);
+      
+      // Extract topics for the current month, limited by maxWords
+      words = monthData.topics.slice(0, maxWords).map(topic => ({
+        text: topic.name,
+        value: topic.share * 1000, // Scale the share values for better visualization
+        originalShare: topic.share, // Keep the original value for reference
+        wasInPreviousPeriod: previousPeriodWords.has(topic.name) // This will be handled by the library now
       }));
       
-      // Occasionally add or remove words
-      if (Math.random() > 0.7 && words.length > 5) {
-        // Remove a random word
-        const removeIndex = Math.floor(Math.random() * words.length);
-        words.splice(removeIndex, 1);
-      } else if (Math.random() > 0.7 && words.length < 15) {
-        // Add a new word
-        const newWords = [
-          "Animation", "Stable", "Position", "Memory", "Layout", 
-          "Generator", "Web", "Responsive", "Design", "Browser"
-        ];
-        const unused = newWords.filter(w => !words.some(existing => existing.text === w));
-        if (unused.length > 0) {
-          const randomWord = unused[Math.floor(Math.random() * unused.length)];
-          words.push({
-            text: randomWord,
-            value: 15 + Math.random() * 25
-          });
-        }
-      }
+      // Update word count display
+      updateWordCount();
+    }
+    
+    // Update the month display
+    function updateMonthDisplay() {
+      if (topicData.length === 0) return;
+      
+      const monthData = topicData[currentMonthIndex];
+      if (!monthData) return;
+      
+      document.getElementById("current-month").textContent = `Current Month: ${monthData.period}`;
+    }
+    
+    // Update the word count display
+    function updateWordCount() {
+      document.getElementById("word-count").textContent = 
+        `Showing ${words.length} of ${topicData[currentMonthIndex]?.topics.length || 0} topics`;
+    }
+    
+    // Update the cloud with animations
+    function end(renderedWords) {
+      // Update placement stats
+      document.getElementById("placement-stats").textContent = 
+        `Placed ${renderedWords.length} of ${words.length} words`;
+      
+      // Get the animation time from the input field
+      animationTime = parseInt(document.getElementById("animation-time").value);
+      
+      // Draw the cloud with the specified animation time
+      cloud.draw(svg, 800, 500, animationTime);
+    }
+    
+    // Move to the next month
+    function goToNextMonth() {
+      if (topicData.length === 0) return;
+      
+      // Store current words before changing to next month
+      previousPeriodWords = new Set(words.map(w => w.text));
+      
+      // Move to next month
+      currentMonthIndex = (currentMonthIndex + 1) % topicData.length;
+      updateWordsFromTopicData();
+      updateMonthDisplay();
+      
+      // Update font size function with current settings
+      cloud.fontSize(function(d) { return calculateFontSize(d.value); });
       
       // Update and redraw the cloud
-      cloud.words(words).start();
+      renderCloud();
+    }
+    
+    // Start auto-play
+    function startAutoPlay() {
+      if (playInterval) clearInterval(playInterval);
+      
+      const updateIntervalMs = parseInt(document.getElementById("update-interval").value);
+      playInterval = setInterval(goToNextMonth, updateIntervalMs);
+      
+      // Update button states
+      document.getElementById("play-btn").disabled = true;
+      document.getElementById("pause-btn").disabled = false;
+    }
+    
+    // Stop auto-play
+    function stopAutoPlay() {
+      if (playInterval) {
+        clearInterval(playInterval);
+        playInterval = null;
+      }
+      
+      // Update button states
+      document.getElementById("play-btn").disabled = false;
+      document.getElementById("pause-btn").disabled = true;
+    }
+    
+    // Re-render with updated settings
+    function updateCloudSettings() {
+      // Get current settings
+      scaleType = document.getElementById("scale-type").value;
+      scaleFactor = parseFloat(document.getElementById("scale-factor").value);
+      minFontSize = parseInt(document.getElementById("min-size").value);
+      maxFontSize = parseInt(document.getElementById("max-size").value);
+      padding = parseInt(document.getElementById("padding").value);
+      
+      // Limit maxFontSize
+      if (maxFontSize > 100) maxFontSize = 100;
+      if (maxFontSize < minFontSize + 10) maxFontSize = minFontSize + 10;
+      
+      // Update font size function
+      cloud
+        .fontSize(function(d) { return calculateFontSize(d.value); })
+        .padding(padding);
+      
+      // Update max words if changed
+      const newMaxWords = parseInt(document.getElementById("max-words").value);
+      if (newMaxWords !== maxWords) {
+        maxWords = newMaxWords;
+        updateWordsFromTopicData();
+      }
+      
+      // Redraw the cloud
+      renderCloud();
+    }
+    
+    // Event listeners
+    document.getElementById("update-btn").addEventListener("click", goToNextMonth);
+    document.getElementById("play-btn").addEventListener("click", startAutoPlay);
+    document.getElementById("pause-btn").addEventListener("click", stopAutoPlay);
+    
+    document.getElementById("update-interval").addEventListener("change", function() {
+      if (playInterval) {
+        stopAutoPlay();
+        startAutoPlay();
+      }
+    });
+    
+    document.getElementById("animation-time").addEventListener("change", function() {
+      animationTime = parseInt(this.value);
     });
     
     // Reset button handler
-    d3.select("#reset-btn").on("click", function() {
-      // Reset the position memory
+    document.getElementById("reset-btn").addEventListener("click", function() {
+      // Reset the cloud's memory
       cloud.resetPrevLayouts();
-      // Redraw the cloud with the same words
-      cloud.words(words).start();
+      // Redraw the cloud
+      renderCloud();
+    });
+    
+    // Add event listeners for new controls
+    document.getElementById("scale-type").addEventListener("change", updateCloudSettings);
+    document.getElementById("scale-factor").addEventListener("change", updateCloudSettings);
+    document.getElementById("min-size").addEventListener("change", updateCloudSettings);
+    document.getElementById("max-size").addEventListener("change", updateCloudSettings);
+    document.getElementById("max-words").addEventListener("change", updateCloudSettings);
+    document.getElementById("padding").addEventListener("change", updateCloudSettings);
+    
+    // On window load, initialize the SVG with a proper transform
+    window.addEventListener('load', function() {
+      // Clear any existing content
+      svg.selectAll("*").remove();
+      
+      // Add a group element with transform to center everything
+      svg.append("g")
+         .attr("transform", "translate(400,250)"); // Center of 800x500
     });
   </script>
 </body>
